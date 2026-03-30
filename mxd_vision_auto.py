@@ -96,7 +96,7 @@ class ScreenCapture:
         return False
 
     def select_region_interactive(self):
-        """截取全屏后让用户鼠标拖拽选择截图区域"""
+        """截取全屏后让用户鼠标拖拽选择截图区域，返回全屏截图和选区后的裁剪图"""
         print("\n即将截取全屏，请在弹出的窗口中用鼠标拖拽选择游戏区域...")
         print("操作: 鼠标拖拽选区 → 按空格或回车确认 → 按C取消重选")
         input("准备好后按回车截图...")
@@ -114,7 +114,7 @@ class ScreenCapture:
 
         if w == 0 or h == 0:
             print("[屏幕] 未选择区域，将使用全屏截图")
-            return False
+            return img  # 返回全屏截图供后续复用
 
         # 添加全屏偏移量
         self.manual_region = {
@@ -126,7 +126,10 @@ class ScreenCapture:
         print(f"[屏幕] 已选择区域: left={self.manual_region['left']}, "
               f"top={self.manual_region['top']}, "
               f"宽={self.manual_region['width']}, 高={self.manual_region['height']}")
-        return True
+
+        # 裁剪选区图像供后续复用
+        cropped = img[y:y+h, x:x+w]
+        return cropped
 
     def bring_to_front(self):
         """将游戏窗口前置"""
@@ -686,6 +689,7 @@ class MXDVisionAuto:
         print("="*50 + "\n")
 
         # 设置截图区域
+        cached_img = None  # 缓存截图供后续复用
         print("\n截图区域设置:")
         print("1. 自动查找游戏窗口")
         print("2. 鼠标拖拽选择区域")
@@ -697,7 +701,7 @@ class MXDVisionAuto:
             if not found:
                 print("[屏幕] 未找到窗口，将使用全屏截图")
         elif region_choice == '2':
-            self.screen.select_region_interactive()
+            cached_img = self.screen.select_region_interactive()
         else:
             print("[屏幕] 使用主显示器全屏截图")
         
@@ -709,7 +713,7 @@ class MXDVisionAuto:
         
         if choice == "1":
             self.detector.set_mode("template")
-            self._setup_template_mode()
+            self._setup_template_mode(cached_img)
         else:
             self.detector.set_mode("color")
             self._setup_color_mode()
@@ -757,41 +761,48 @@ class MXDVisionAuto:
         print("按 F10 开始自动刷怪，ESC 停止")
         print("="*50 + "\n")
         
-    def _setup_template_mode(self):
+    def _setup_template_mode(self, cached_img=None):
         """设置模板匹配模式"""
         print("\n模板匹配设置:")
-        print("请先进入游戏，对准怪物，按回车截图保存为模板")
-        input("准备好后按回车...")
-        
-        # 截图
-        img = self.screen.capture()
-        if img is not None:
-            timestamp = datetime.now().strftime("%m%d_%H%M%S")
-            template_path = f"template_{timestamp}.png"
-            
-            # 让用户选择怪物区域（简化版：假设怪物在屏幕中央）
-            h, w = img.shape[:2]
-            # 截取中央区域作为模板
-            cx, cy = w // 2, h // 2
-            crop_size = 80
-            template = img[cy-crop_size:cy+crop_size, cx-crop_size:cx+crop_size]
-            cv2.imwrite(template_path, template)
-            self.detector.add_template(template_path)
-            print(f"已保存模板: {template_path}")
-            
-        # 询问是否添加更多模板
+
+        # 用缓存的截图或重新截图
+        if cached_img is not None:
+            img = cached_img
+            print("使用之前的截图，请在图像中框选怪物模板")
+        else:
+            print("请先进入游戏，对准怪物，按回车截图")
+            input("准备好后按回车...")
+            img = self.screen.capture()
+
+        if img is None:
+            print("[错误] 无法获取截图")
+            return
+
+        # 让用户框选怪物区域
+        self._select_monster_template(img)
+
+        # 添加更多模板
         while input("\n是否添加更多模板? (y/n): ").strip().lower() == 'y':
-            input("对准另一种怪物，准备好后按回车...")
             img = self.screen.capture()
             if img is not None:
-                timestamp = datetime.now().strftime("%m%d_%H%M%S")
-                template_path = f"template_{timestamp}.png"
-                h, w = img.shape[:2]
-                cx, cy = w // 2, h // 2
-                crop_size = 80
-                template = img[cy-crop_size:cy+crop_size, cx-crop_size:cx+crop_size]
-                cv2.imwrite(template_path, template)
-                self.detector.add_template(template_path)
+                self._select_monster_template(img)
+
+    def _select_monster_template(self, img):
+        """在截图上让用户框选怪物模板"""
+        print("请在弹出的窗口中用鼠标框选怪物区域 (空格/回车确认, C取消)")
+        x, y, w, h = cv2.selectROI("框选怪物模板", img, fromCenter=False, showCrosshair=True)
+        cv2.destroyAllWindows()
+
+        if w == 0 or h == 0:
+            print("[跳过] 未选择区域")
+            return
+
+        template = img[y:y+h, x:x+w]
+        timestamp = datetime.now().strftime("%m%d_%H%M%S")
+        template_path = f"template_{timestamp}.png"
+        cv2.imwrite(template_path, template)
+        self.detector.add_template(template_path)
+        print(f"已保存模板: {template_path} ({w}x{h})")
                 
     def _setup_color_mode(self):
         """设置颜色检测模式"""

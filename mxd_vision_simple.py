@@ -52,7 +52,7 @@ class VisionBot:
         self.last_move_time = time.time()
 
     def _setup_capture(self):
-        """设置截图区域"""
+        """设置截图区域，返回缓存的截图（如果有）"""
         print("\n截图区域设置:")
         print("1. 自动查找游戏窗口")
         print("2. 鼠标拖拽选择区域")
@@ -84,7 +84,7 @@ class VisionBot:
                         "width": w.width, "height": w.height,
                     }
                     print(f"[截图] 已选择窗口: {w.title}")
-                    return
+                    return None
             elif title_input:
                 matches = gw.getWindowsWithTitle(title_input)
                 if matches:
@@ -94,8 +94,9 @@ class VisionBot:
                         "width": w.width, "height": w.height,
                     }
                     print(f"[截图] 已选择窗口: {w.title}")
-                    return
+                    return None
             print("[截图] 未匹配到窗口，将使用全屏截图")
+            return None
 
         elif choice == '2':
             print("\n即将截取全屏，请在弹出的窗口中用鼠标拖拽选择游戏区域...")
@@ -113,6 +114,7 @@ class VisionBot:
 
             if w == 0 or h == 0:
                 print("[截图] 未选择区域，将使用全屏截图")
+                return img  # 仍返回全屏截图供后续复用
             else:
                 self.capture_monitor = {
                     "left": int(monitor["left"]) + int(x),
@@ -123,8 +125,10 @@ class VisionBot:
                 print(f"[截图] 已选择区域: left={self.capture_monitor['left']}, "
                       f"top={self.capture_monitor['top']}, "
                       f"宽={self.capture_monitor['width']}, 高={self.capture_monitor['height']}")
+                return img[y:y+h, x:x+w]  # 返回裁剪后的图像
         else:
             print("[截图] 使用主显示器全屏截图")
+            return None
 
     def capture(self):
         """截图"""
@@ -315,13 +319,23 @@ class VisionBot:
         img = self.capture()
         if img is None:
             return
-        h, w = img.shape[:2]
-        # 截取中央区域
-        template = img[h//2-40:h//2+40, w//2-40:w//2+40]
+        self._select_template(img)
+
+    def _select_template(self, img):
+        """在截图上让用户框选怪物模板"""
+        print("请在弹出的窗口中框选怪物区域 (空格/回车确认, C取消)")
+        x, y, w, h = cv2.selectROI("框选怪物模板", img, fromCenter=False, showCrosshair=True)
+        cv2.destroyAllWindows()
+
+        if w == 0 or h == 0:
+            print("[跳过] 未选择区域")
+            return
+
+        template = img[y:y+h, x:x+w]
         path = f"template_{int(time.time())}.png"
         cv2.imwrite(path, template)
         self.templates.append(template)
-        print(f"已保存模板: {path}")
+        print(f"已保存模板: {path} ({w}x{h})")
     
     def setup(self):
         """初始化"""
@@ -330,15 +344,21 @@ class VisionBot:
         print("="*40)
 
         # 截图区域
-        self._setup_capture()
+        cached_img = self._setup_capture()
 
         # 检测模式
         mode = input("\n检测模式 (c=颜色/t=模板): ").strip().lower()
         self.detect_mode = "template" if mode == 't' else "color"
-        
+
         if self.detect_mode == "template":
-            while input("添加模板? (y/n): ") == 'y':
-                self.capture_template()
+            if cached_img is not None:
+                print("使用之前的截图，请在图像中框选怪物模板")
+                self._select_template(cached_img)
+                while input("添加更多模板? (y/n): ") == 'y':
+                    self.capture_template()
+            else:
+                while input("添加模板? (y/n): ") == 'y':
+                    self.capture_template()
         
         # 职业类型
         combat = input("职业类型 (m=近战/r=远程): ").strip().lower()
