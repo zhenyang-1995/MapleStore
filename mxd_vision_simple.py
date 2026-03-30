@@ -301,12 +301,17 @@ class VisionBot:
         """主循环"""
         while not self.stop_flag:
             t0 = time.time()
-            
+
             img = self.capture()
             h, w = img.shape[:2] if img is not None else (0, 0)
             player_pos = (w//2, h-100)
-            
+
             monsters = self.detect_monsters(img)
+
+            # 执行动作前确保游戏窗口在前台
+            if monsters:
+                self._bring_game_to_front()
+
             action = self.action(player_pos, monsters)
             
             # 异常处理
@@ -415,7 +420,6 @@ class VisionBot:
     def _bring_game_to_front(self):
         """强制将游戏窗口切到前台"""
         target = None
-        # 通过截图区域坐标找到窗口
         if self.capture_monitor:
             try:
                 cx = self.capture_monitor["left"] + self.capture_monitor["width"] // 2
@@ -427,7 +431,6 @@ class VisionBot:
                 pass
 
         if target is None:
-            # 尝试常见游戏窗口标题
             try:
                 for title in ["冒险岛", "MapleStory", "新枫之谷", "Maple"]:
                     matches = gw.getWindowsWithTitle(title)
@@ -438,23 +441,24 @@ class VisionBot:
                 pass
 
         if not target:
-            print("[提示] 未找到游戏窗口，请手动点击游戏窗口")
             return
 
         try:
             hwnd = int(target._hWnd) if hasattr(target, '_hWnd') else 0
             if hwnd:
-                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)   # Alt down
-                ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)   # Alt up
+                fg = ctypes.windll.user32.GetForegroundWindow()
+                if hwnd == fg:
+                    return  # 已经在前台
+                ctypes.windll.user32.ShowWindow(hwnd, 9)
+                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
-                time.sleep(0.5)
-                print(f"[截图] 已切换到窗口: {target.title}")
+                time.sleep(0.05)
             else:
                 target.activate()
-                time.sleep(0.5)
+                time.sleep(0.05)
         except Exception:
-            print("[截图] 自动切换失败，请手动点击游戏窗口")
+            pass
         
         # ESC监听
         def esc_listener():

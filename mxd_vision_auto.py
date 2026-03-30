@@ -150,17 +150,16 @@ class ScreenCapture:
         if target:
             try:
                 hwnd = int(target._hWnd)
-                # 恢复最小化窗口
+                fg = ctypes.windll.user32.GetForegroundWindow()
+                if hwnd == fg:
+                    return  # 已经在前台，跳过
                 ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                # Alt 键技巧绕过 SetForegroundWindow 限制
                 ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)   # Alt down
                 ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)   # Alt up
-                # 强制设为前台窗口
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
-                time.sleep(0.5)
-                print(f"[屏幕] 已切换到窗口: {target.title}")
+                time.sleep(0.05)
             except Exception:
-                print("[屏幕] 自动切换失败，请手动点击游戏窗口")
+                pass
 
     def capture(self, region=None):
         """
@@ -840,27 +839,31 @@ class MXDVisionAuto:
         screenshot = self.screen.capture()
         if screenshot is None:
             return
-            
+
         # 获取玩家位置
         player_pos = self.get_player_position(screenshot)
         if player_pos:
             self.exception_handler.update_position(player_pos)
-            
+
         # 检测怪物
         monsters = self.detector.detect(screenshot)
         self.detection_count += len(monsters)
-        
+
         # 决策
         action_type, params = self.combat.get_action(player_pos, monsters)
         self.exception_handler.update_action(action_type)
-        
+
+        # 执行动作前确保游戏窗口在前台
+        if action_type != "idle":
+            self.screen.bring_to_front()
+
         # 执行动作
         self.combat.execute_action(action_type, params)
-        
-        # 显示调试信息
+
+        # 显示调试信息（放在动作之后，且不抢焦点）
         if self.show_debug:
             self._draw_debug_info(screenshot, player_pos, monsters, action_type)
-            
+
         # 异常检测
         current_time = time.time()
         exception_type, suggestion = self.exception_handler.check_exceptions(current_time)
@@ -870,26 +873,22 @@ class MXDVisionAuto:
         self.frame_count += 1
         
     def _draw_debug_info(self, img, player_pos, monsters, action):
-        """绘制调试信息"""
-        # 复制图像
+        """绘制调试信息（不抢焦点）"""
         debug_img = img.copy()
-        
-        # 绘制玩家位置
+
         if player_pos:
             cv2.circle(debug_img, player_pos, 10, (0, 255, 0), -1)
             cv2.circle(debug_img, player_pos, self.combat.attack_range, (0, 255, 0), 2)
-            
-        # 绘制怪物框
+
         for (x, y, w, h) in monsters:
             cv2.rectangle(debug_img, (x, y), (x+w, y+h), (0, 0, 255), 2)
-            
-        # 显示信息
+
         info_text = f"Monsters: {len(monsters)} | Action: {action} | Frame: {self.frame_count}"
         cv2.putText(debug_img, info_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        
-        # 显示图像
+
         cv2.imshow("Debug", debug_img)
-        cv2.waitKey(1)
+        # 不用 waitKey，用 pollKey 避免抢焦点
+        cv2.pollKey()
         
     def start(self):
         """开始自动刷怪"""
@@ -898,20 +897,19 @@ class MXDVisionAuto:
         self.start_time = time.time()
         self.frame_count = 0
 
-        # 将游戏窗口切到前台
-        self.screen.bring_to_front()
-
         print("\n" + "="*50)
         print("自动刷怪开始！")
         print("3秒后执行... (请切换到游戏窗口)")
         print("="*50 + "\n")
-        
+
         for i in range(3, 0, -1):
             print(f"{i}...")
             time.sleep(1)
             if self.stop_flag:
                 break
-                
+
+        # 倒计时结束后切到游戏窗口
+        self.screen.bring_to_front()
         print("运行中... 按 ESC 停止\n")
         
         # 启动ESC监听
