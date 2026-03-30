@@ -133,12 +133,26 @@ class ScreenCapture:
 
     def bring_to_front(self):
         """将游戏窗口前置"""
-        if self.game_window:
+        target = self.game_window
+
+        # 如果没有 game_window 但有手动区域，尝试通过坐标找窗口
+        if target is None and self.manual_region:
             try:
-                if self.game_window.isMinimized:
-                    self.game_window.restore()
-                self.game_window.activate()
-                time.sleep(0.3)
+                cx = self.manual_region["left"] + self.manual_region["width"] // 2
+                cy = self.manual_region["top"] + self.manual_region["height"] // 2
+                windows_at = gw.getWindowsAt(cx, cy)
+                # 取最大的窗口（通常是游戏窗口而不是覆盖层）
+                if windows_at:
+                    target = max(windows_at, key=lambda w: w.width * w.height)
+            except Exception:
+                pass
+
+        if target:
+            try:
+                if target.isMinimized:
+                    target.restore()
+                target.activate()
+                time.sleep(0.5)
             except Exception:
                 pass
 
@@ -893,10 +907,13 @@ class MXDVisionAuto:
         self.stop_flag = False
         self.start_time = time.time()
         self.frame_count = 0
-        
+
+        # 将游戏窗口切到前台
+        self.screen.bring_to_front()
+
         print("\n" + "="*50)
         print("自动刷怪开始！")
-        print("3秒后执行...")
+        print("3秒后执行... (请切换到游戏窗口)")
         print("="*50 + "\n")
         
         for i in range(3, 0, -1):

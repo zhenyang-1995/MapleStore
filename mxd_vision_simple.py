@@ -390,10 +390,49 @@ class VisionBot:
     def start(self):
         """开始"""
         self.stop_flag = False
-        print("\n3秒后开始...")
+
+        # 尝试将游戏窗口切到前台
+        self._bring_game_to_front()
+
+        print("\n3秒后开始... (请切换到游戏窗口)")
         for i in range(3, 0, -1):
             print(i)
             time.sleep(1)
+
+    def _bring_game_to_front(self):
+        """尝试将游戏窗口切到前台"""
+        target = None
+        # 通过截图区域坐标找到窗口
+        if self.capture_monitor:
+            try:
+                cx = self.capture_monitor["left"] + self.capture_monitor["width"] // 2
+                cy = self.capture_monitor["top"] + self.capture_monitor["height"] // 2
+                windows_at = gw.getWindowsAt(cx, cy)
+                if windows_at:
+                    target = max(windows_at, key=lambda w: w.width * w.height)
+            except Exception:
+                pass
+
+        if target is None:
+            # 尝试常见游戏窗口标题
+            try:
+                for title in ["冒险岛", "MapleStory", "新枫之谷", "Maple"]:
+                    matches = gw.getWindowsWithTitle(title)
+                    if matches:
+                        target = matches[0]
+                        break
+            except Exception:
+                pass
+
+        if target:
+            try:
+                if target.isMinimized:
+                    target.restore()
+                target.activate()
+                time.sleep(0.5)
+                print(f"[截图] 已将窗口切到前台: {target.title}")
+            except Exception:
+                print("[截图] 无法自动切换窗口，请手动切换到游戏")
         
         # ESC监听
         def esc_listener():
