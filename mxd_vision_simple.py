@@ -12,6 +12,7 @@
 import random
 import threading
 import time
+import ctypes
 from collections import deque
 
 import cv2
@@ -128,7 +129,14 @@ class VisionBot:
                 return img[y:y+h, x:x+w]  # 返回裁剪后的图像
         else:
             print("[截图] 使用主显示器全屏截图")
-            return None
+            # 截一张图缓存供模板匹配复用
+            try:
+                monitor = self.sct.monitors[1]
+                screenshot = self.sct.grab(monitor)
+                img = np.array(screenshot)
+                return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+            except Exception:
+                return None
 
     def capture(self):
         """截图"""
@@ -400,7 +408,7 @@ class VisionBot:
             time.sleep(1)
 
     def _bring_game_to_front(self):
-        """尝试将游戏窗口切到前台"""
+        """强制将游戏窗口切到前台"""
         target = None
         # 通过截图区域坐标找到窗口
         if self.capture_monitor:
@@ -424,15 +432,24 @@ class VisionBot:
             except Exception:
                 pass
 
-        if target:
-            try:
-                if target.isMinimized:
-                    target.restore()
+        if not target:
+            print("[提示] 未找到游戏窗口，请手动点击游戏窗口")
+            return
+
+        try:
+            hwnd = int(target._hWnd) if hasattr(target, '_hWnd') else 0
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)   # Alt down
+                ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)   # Alt up
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+                time.sleep(0.5)
+                print(f"[截图] 已切换到窗口: {target.title}")
+            else:
                 target.activate()
                 time.sleep(0.5)
-                print(f"[截图] 已将窗口切到前台: {target.title}")
-            except Exception:
-                print("[截图] 无法自动切换窗口，请手动切换到游戏")
+        except Exception:
+            print("[截图] 自动切换失败，请手动点击游戏窗口")
         
         # ESC监听
         def esc_listener():

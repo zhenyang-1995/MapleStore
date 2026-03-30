@@ -20,6 +20,7 @@ import random
 import threading
 import time
 import json
+import ctypes
 import cv2
 import numpy as np
 import mss
@@ -132,7 +133,7 @@ class ScreenCapture:
         return cropped
 
     def bring_to_front(self):
-        """将游戏窗口前置"""
+        """使用 Windows API 强制将游戏窗口切到前台"""
         target = self.game_window
 
         # 如果没有 game_window 但有手动区域，尝试通过坐标找窗口
@@ -141,7 +142,6 @@ class ScreenCapture:
                 cx = self.manual_region["left"] + self.manual_region["width"] // 2
                 cy = self.manual_region["top"] + self.manual_region["height"] // 2
                 windows_at = gw.getWindowsAt(cx, cy)
-                # 取最大的窗口（通常是游戏窗口而不是覆盖层）
                 if windows_at:
                     target = max(windows_at, key=lambda w: w.width * w.height)
             except Exception:
@@ -149,12 +149,18 @@ class ScreenCapture:
 
         if target:
             try:
-                if target.isMinimized:
-                    target.restore()
-                target.activate()
+                hwnd = int(target._hWnd)
+                # 恢复最小化窗口
+                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                # Alt 键技巧绕过 SetForegroundWindow 限制
+                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)   # Alt down
+                ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)   # Alt up
+                # 强制设为前台窗口
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
                 time.sleep(0.5)
+                print(f"[屏幕] 已切换到窗口: {target.title}")
             except Exception:
-                pass
+                print("[屏幕] 自动切换失败，请手动点击游戏窗口")
 
     def capture(self, region=None):
         """
@@ -702,22 +708,23 @@ class MXDVisionAuto:
         print("冒险岛图像识别自动刷怪 - 初始化")
         print("="*50 + "\n")
 
-        # 设置截图区域
-        cached_img = None  # 缓存截图供后续复用
+        # 设置截图区域（只截一次图）
+        cached_img = None
         print("\n截图区域设置:")
         print("1. 自动查找游戏窗口")
         print("2. 鼠标拖拽选择区域")
         print("3. 使用全屏截图")
         region_choice = input("请选择 (1-3, 默认3): ").strip() or '3'
 
-        if region_choice == '1':
-            found = self.screen.find_game_window()
-            if not found:
-                print("[屏幕] 未找到窗口，将使用全屏截图")
-        elif region_choice == '2':
+        if region_choice == '2':
+            # 拖拽选区：截图 + 选区 + 返回裁剪图
             cached_img = self.screen.select_region_interactive()
         else:
-            print("[屏幕] 使用主显示器全屏截图")
+            if region_choice == '1':
+                self.screen.find_game_window()
+            # 截一张图缓存，供后续模板匹配复用
+            cached_img = self.screen.capture()
+            print("[屏幕] 已截取初始图像")
         
         # 选择检测模式
         print("\n选择怪物检测模式:")
