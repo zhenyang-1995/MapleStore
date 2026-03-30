@@ -17,6 +17,7 @@ from collections import deque
 import cv2
 import numpy as np
 import mss
+import pygetwindow as gw
 from pynput import keyboard
 from pynput.keyboard import Controller, Key
 
@@ -38,19 +39,88 @@ class VisionBot:
         self.has_dash = False      # 是否有位移技能
         self.dash_key = None       # 位移技能键
 
+        # 截图区域
+        self.capture_monitor = None  # None 表示使用默认全屏
+
         # 状态
         self.running = False
         self.stop_flag = False
         self.templates = []
-        
+
         # 异常处理
         self.pos_history = deque(maxlen=20)
         self.last_move_time = time.time()
-        
+
+    def _setup_capture(self):
+        """设置截图区域"""
+        print("\n截图区域设置:")
+        print("1. 自动查找游戏窗口")
+        print("2. 手动输入截图区域")
+        print("3. 使用全屏截图")
+
+        choice = input("请选择 (1-3, 默认3): ").strip() or '3'
+
+        if choice == '1':
+            # 列出所有窗口
+            print("\n当前所有可见窗口:")
+            print("-" * 40)
+            try:
+                all_windows = gw.getAllWindows()
+                visible = [(i, w) for i, w in enumerate(all_windows) if w.visible and w.title]
+                for idx, w in visible:
+                    print(f"  [{idx}] {w.title}")
+                print("-" * 40)
+            except Exception as e:
+                print(f"获取窗口列表失败: {e}")
+                all_windows = []
+
+            title_input = input("输入窗口标题关键字或编号: ").strip()
+            if title_input.isdigit():
+                idx = int(title_input)
+                if 0 <= idx < len(all_windows):
+                    w = all_windows[idx]
+                    self.capture_monitor = {
+                        "left": w.left, "top": w.top,
+                        "width": w.width, "height": w.height,
+                    }
+                    print(f"[截图] 已选择窗口: {w.title}")
+                    return
+            elif title_input:
+                matches = gw.getWindowsWithTitle(title_input)
+                if matches:
+                    w = matches[0]
+                    self.capture_monitor = {
+                        "left": w.left, "top": w.top,
+                        "width": w.width, "height": w.height,
+                    }
+                    print(f"[截图] 已选择窗口: {w.title}")
+                    return
+            print("[截图] 未匹配到窗口，将使用全屏截图")
+
+        elif choice == '2':
+            try:
+                left = input("  左 (默认0): ").strip()
+                top = input("  上 (默认0): ").strip()
+                width = input("  宽 (默认1920): ").strip()
+                height = input("  高 (默认1080): ").strip()
+                self.capture_monitor = {
+                    "left": int(left) if left else 0,
+                    "top": int(top) if top else 0,
+                    "width": int(width) if width else 1920,
+                    "height": int(height) if height else 1080,
+                }
+                print(f"[截图] 手动区域已设置: left={self.capture_monitor['left']}, "
+                      f"top={self.capture_monitor['top']}, "
+                      f"w={self.capture_monitor['width']}, h={self.capture_monitor['height']}")
+            except ValueError:
+                print("[截图] 输入无效，将使用全屏截图")
+        else:
+            print("[截图] 使用主显示器全屏截图")
+
     def capture(self):
         """截图"""
         try:
-            monitor = self.sct.monitors[1]
+            monitor = self.capture_monitor or self.sct.monitors[1]
             screenshot = self.sct.grab(monitor)
             img = np.array(screenshot)
             return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
@@ -249,7 +319,10 @@ class VisionBot:
         print("\n" + "="*40)
         print("冒险岛图像识别自动刷怪")
         print("="*40)
-        
+
+        # 截图区域
+        self._setup_capture()
+
         # 检测模式
         mode = input("\n检测模式 (c=颜色/t=模板): ").strip().lower()
         self.detect_mode = "template" if mode == 't' else "color"

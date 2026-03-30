@@ -33,39 +33,107 @@ from pynput.keyboard import Controller, Key
 
 class ScreenCapture:
     """屏幕捕获模块 - 使用mss实现高性能截图"""
-    
+
     def __init__(self):
         self.sct = mss.mss()
         self.game_window = None
-        self.monitor = None
-        
-    def find_game_window(self, window_title="冒险岛"):
-        """查找游戏窗口"""
+        self.manual_region = None  # 手动指定的截图区域
+
+    def list_windows(self):
+        """列出所有可见窗口供用户选择"""
+        print("\n当前所有可见窗口:")
+        print("-" * 50)
         try:
-            # 尝试查找包含"冒险岛"的窗口
-            windows = gw.getWindowsWithTitle(window_title)
-            if not windows:
-                # 尝试其他常见标题
-                for title in ["MapleStory", "新枫之谷", "Maple"]:
-                    windows = gw.getWindowsWithTitle(title)
-                    if windows:
-                        break
-                        
-            if windows:
-                self.game_window = windows[0]
-                print(f"[屏幕] 找到游戏窗口: {self.game_window.title}")
+            all_windows = gw.getAllWindows()
+            visible = [(i, w) for i, w in enumerate(all_windows) if w.visible and w.title]
+            for idx, w in visible:
+                print(f"  [{idx}] {w.title}")
+            print("-" * 50)
+            return all_windows
+        except Exception as e:
+            print(f"[屏幕] 获取窗口列表失败: {e}")
+            return []
+
+    def find_game_window(self, window_title=None):
+        """查找游戏窗口，支持用户手动输入标题或选择"""
+        all_windows = self.list_windows()
+
+        # 用户输入窗口标题关键字
+        if window_title is None:
+            window_title = input("\n请输入游戏窗口标题关键字 (直接回车跳过): ").strip()
+
+        if window_title:
+            matches = gw.getWindowsWithTitle(window_title)
+            if matches:
+                self.game_window = matches[0]
+                print(f"[屏幕] 找到窗口: {self.game_window.title}")
                 return True
             else:
-                print("[屏幕] 未找到游戏窗口，将捕获全屏")
-                return False
-        except Exception as e:
-            print(f"[屏幕] 查找窗口失败: {e}")
+                print(f"[屏幕] 未找到包含 '{window_title}' 的窗口")
+
+        # 尝试常见标题
+        for title in ["冒险岛", "MapleStory", "新枫之谷", "Maple"]:
+            matches = gw.getWindowsWithTitle(title)
+            if matches:
+                self.game_window = matches[0]
+                print(f"[屏幕] 自动找到窗口: {self.game_window.title}")
+                return True
+
+        # 让用户输入窗口编号
+        if all_windows:
+            try:
+                idx_input = input("请输入窗口编号 (从上面的列表中选择，直接回车跳过): ").strip()
+                if idx_input.isdigit():
+                    idx = int(idx_input)
+                    if 0 <= idx < len(all_windows) and all_windows[idx].title:
+                        self.game_window = all_windows[idx]
+                        print(f"[屏幕] 已选择窗口: {self.game_window.title}")
+                        return True
+            except Exception:
+                pass
+
+        print("[屏幕] 未匹配到游戏窗口，将使用手动区域或全屏截图")
+        return False
+
+    def set_manual_region(self):
+        """让用户手动输入截图区域"""
+        print("\n手动指定截图区域 (像素坐标):")
+        print("提示: 可以先截图全屏，然后用画图工具查看坐标")
+        try:
+            left = input("  左 (left, 默认0): ").strip()
+            top = input("  上 (top, 默认0): ").strip()
+            width = input("  宽 (width, 默认1920): ").strip()
+            height = input("  高 (height, 默认1080): ").strip()
+
+            self.manual_region = {
+                "left": int(left) if left else 0,
+                "top": int(top) if top else 0,
+                "width": int(width) if width else 1920,
+                "height": int(height) if height else 1080,
+            }
+            print(f"[屏幕] 手动区域已设置: left={self.manual_region['left']}, "
+                  f"top={self.manual_region['top']}, "
+                  f"w={self.manual_region['width']}, h={self.manual_region['height']}")
+            return True
+        except ValueError:
+            print("[屏幕] 输入无效，手动区域设置失败")
             return False
-    
+
+    def bring_to_front(self):
+        """将游戏窗口前置"""
+        if self.game_window:
+            try:
+                if self.game_window.isMinimized:
+                    self.game_window.restore()
+                self.game_window.activate()
+                time.sleep(0.3)
+            except Exception:
+                pass
+
     def capture(self, region=None):
         """
         捕获屏幕区域
-        region: (left, top, width, height) 或 None捕获全屏/游戏窗口
+        region: (left, top, width, height) 或 None捕获游戏窗口/全屏
         返回: numpy array (BGR格式，OpenCV可用)
         """
         try:
@@ -76,8 +144,9 @@ class ScreenCapture:
                     "width": region[2],
                     "height": region[3]
                 }
-            elif self.game_window and self.game_window.isActive:
-                # 捕获游戏窗口区域
+            elif self.manual_region:
+                monitor = dict(self.manual_region)
+            elif self.game_window:
                 monitor = {
                     "left": self.game_window.left,
                     "top": self.game_window.top,
@@ -85,15 +154,13 @@ class ScreenCapture:
                     "height": self.game_window.height
                 }
             else:
-                # 捕获主屏幕
-                monitor = self.sct.monitors[1]  # 1是主屏幕，0是所有屏幕
-                
+                monitor = self.sct.monitors[1]
+
             screenshot = self.sct.grab(monitor)
-            # 转换为OpenCV格式 (BGR)
             img = np.array(screenshot)
             img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
             return img
-            
+
         except Exception as e:
             print(f"[屏幕] 截图失败: {e}")
             return None
@@ -608,9 +675,18 @@ class MXDVisionAuto:
         print("\n" + "="*50)
         print("冒险岛图像识别自动刷怪 - 初始化")
         print("="*50 + "\n")
-        
+
         # 查找游戏窗口
-        self.screen.find_game_window()
+        found = self.screen.find_game_window()
+        if not found:
+            print("\n自动查找窗口失败，请选择:")
+            print("1. 手动输入截图区域")
+            print("2. 使用全屏截图")
+            region_choice = input("请选择 (1-2): ").strip()
+            if region_choice == "1":
+                self.screen.set_manual_region()
+            else:
+                print("[屏幕] 将使用主显示器全屏截图")
         
         # 选择检测模式
         print("\n选择怪物检测模式:")
