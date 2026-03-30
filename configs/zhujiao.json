@@ -1,0 +1,28 @@
+{
+  "capture_mode": "2",
+  "detect_mode": "template",
+  "template_set": "280_3",
+  "template_threshold": 0.7,
+  "target_color": "red",
+  "combat_type": "ranged",
+  "attack_range": 100,
+  "attack_key": "v",
+  "skill_keys": [
+    "a",
+    "s",
+    "d",
+    "f",
+    "t"
+  ],
+  "jump_key": "c",
+  "has_dash": true,
+  "dash_key": "shift",
+  "manual_region": {
+    "left": 33,
+    "top": 16,
+    "width": 1370,
+    "height": 792
+  },
+  "name": "zhujiao",
+  "created": "2026-03-31 01:36:42"
+}
