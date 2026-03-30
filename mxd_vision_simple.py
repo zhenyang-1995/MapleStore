@@ -34,7 +34,10 @@ class VisionBot:
         self.attack_range = 80
         self.attack_key = 'x'
         self.skill_keys = ['a', 's']
-        
+        self.jump_key = Key.space  # 跳跃键，用户可配置
+        self.has_dash = False      # 是否有位移技能
+        self.dash_key = None       # 位移技能键
+
         # 状态
         self.running = False
         self.stop_flag = False
@@ -109,25 +112,66 @@ class VisionBot:
     def action(self, player_pos, monsters):
         """决定并执行动作"""
         nearest = self.get_nearest(player_pos, monsters)
-        
+
         if nearest is None:
             return "idle"
-        
+
         mx, my, mw, mh = nearest
         monster_x = mx + mw // 2
+        monster_y = my + mh // 2
         px, py = player_pos
         dist = abs(monster_x - px)
-        
+        height_diff = py - monster_y  # 正值=怪物在上方, 负值=怪物在下方
+
         # 记录位置用于异常检测
         self.pos_history.append(px)
-        
+
+        # 怪物在上方超过50px
+        if height_diff > 50:
+            direction = Key.left if monster_x < px else Key.right
+            if self.has_dash:
+                # 方向键 + 位移键
+                self.controller.press(direction)
+                time.sleep(0.05)
+                self.controller.press(self.dash_key)
+                time.sleep(0.1)
+                self.controller.release(self.dash_key)
+                self.controller.release(direction)
+                time.sleep(random.uniform(0.05, 0.15))
+            else:
+                # 方向键 + 连按两次跳跃
+                self.controller.press(direction)
+                time.sleep(0.05)
+                self._press(self.jump_key, 0.05)
+                self._press(self.jump_key, 0.05)
+                self.controller.release(direction)
+            return "dash_up" if self.has_dash else "double_jump"
+
+        # 怪物在下方超过30px
+        if height_diff < -30:
+            if self.has_dash:
+                # 下 + 位移键
+                self.controller.press(Key.down)
+                time.sleep(0.05)
+                self.controller.press(self.dash_key)
+                time.sleep(0.1)
+                self.controller.release(self.dash_key)
+                self.controller.release(Key.down)
+                time.sleep(random.uniform(0.05, 0.15))
+            else:
+                # 下 + 跳跃
+                self.controller.press(Key.down)
+                time.sleep(0.05)
+                self._press(self.jump_key, 0.1)
+                self.controller.release(Key.down)
+            return "dash_down" if self.has_dash else "jump_down"
+
+        # 水平攻击范围
         if dist <= self.attack_range:
-            # 攻击
             key = random.choice(self.skill_keys) if random.random() < 0.3 else self.attack_key
             self._press(key)
             return "attack"
         else:
-            # 移动
             if monster_x < px:
                 self._press(Key.left, 0.2)
                 return "left"
@@ -151,7 +195,7 @@ class VisionBot:
             print("[异常] 卡死，尝试恢复...")
             # 跳跃和反向移动
             for _ in range(3):
-                self._press(Key.space, 0.1)
+                self._press(self.jump_key, 0.1)
                 self._press(Key.left if random.random()<0.5 else Key.right, 0.3)
             self.pos_history.clear()
             return True
@@ -218,8 +262,27 @@ class VisionBot:
         combat = input("职业类型 (m=近战/r=远程): ").strip().lower()
         self.combat_type = "ranged" if combat == 'r' else "melee"
         self.attack_range = 250 if self.combat_type == "ranged" else 80
-        
+
+        # 跳跃键
+        KEY_MAP = {
+            'space': Key.space, 'shift': Key.shift, 'ctrl': Key.ctrl, 'alt': Key.alt,
+            'tab': Key.tab, 'enter': Key.enter, 'up': Key.up, 'down': Key.down,
+            'left': Key.left, 'right': Key.right,
+        }
+        jump_input = input("跳跃键 (默认space): ").strip().lower() or 'space'
+        self.jump_key = KEY_MAP.get(jump_input, jump_input)
+
+        # 位移技能
+        has_dash_input = input("是否有位移技能? (y/n, 默认n): ").strip().lower()
+        if has_dash_input == 'y':
+            dash_input = input("位移技能键 (默认f): ").strip().lower() or 'f'
+            self.has_dash = True
+            self.dash_key = KEY_MAP.get(dash_input, dash_input)
+            print(f"[配置] 位移技能已启用, 按键: {dash_input}")
+
         print(f"\n配置完成: {'模板' if self.detect_mode=='template' else '颜色'}检测 + {'远程' if self.combat_type=='ranged' else '近战'}")
+        print(f"跳跃键: {jump_input}")
+        print(f"位移技能: {'已启用' if self.has_dash else '未启用'}")
         print("按 F10 开始，ESC 停止\n")
     
     def start(self):

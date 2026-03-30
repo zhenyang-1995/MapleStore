@@ -288,7 +288,9 @@ class CombatStrategy:
         self.attack_key = 'x'       # 攻击键
         self.skill_keys = ['a', 's']  # 技能键列表
         self.jump_key = Key.space   # 跳跃键
-        
+        self.has_dash = False       # 是否有位移技能
+        self.dash_key = None        # 位移技能键
+
         # 按键控制器
         self.controller = Controller()
         
@@ -309,48 +311,62 @@ class CombatStrategy:
         self.attack_key = attack
         self.skill_keys = skills or ['a', 's']
         self.jump_key = jump
-        
+
+    def set_dash(self, has_dash, dash_key=None):
+        """设置位移技能"""
+        self.has_dash = has_dash
+        self.dash_key = dash_key
+
     def get_action(self, player_pos, monsters):
         """
         根据玩家位置和怪物位置决定行动
         返回: (action_type, params)
-            action_type: "move_left", "move_right", "attack", "skill", "jump", "idle"
+            action_type: "move_left", "move_right", "attack", "skill",
+                         "dash_toward", "double_jump_toward",
+                         "dash_down", "jump_down", "idle"
         """
         if not monsters:
             return "idle", None
-            
+
         # 找到最近的怪物
         nearest = self._find_nearest_monster(player_pos, monsters)
         if nearest is None:
             return "idle", None
-            
+
         mx, my, mw, mh = nearest
         px, py = player_pos
-        
+
         # 怪物中心点
         monster_center_x = mx + mw // 2
         monster_center_y = my + mh // 2
-        
+
         # 计算距离
         distance = abs(monster_center_x - px)
-        height_diff = abs(monster_center_y - py)
-        
-        # 决策逻辑
+        height_diff = py - monster_center_y  # 正值=怪物在上方, 负值=怪物在下方
+
+        # 怪物在上方超过50px
         if height_diff > 50:
-            # 高度差太大，可能需要跳跃或上下移动
-            if monster_center_y < py:
-                return "jump", None
-                
+            direction = Key.left if monster_center_x < px else Key.right
+            if self.has_dash:
+                return "dash_toward", direction
+            else:
+                return "double_jump_toward", direction
+
+        # 怪物在下方超过30px
+        if height_diff < -30:
+            if self.has_dash:
+                return "dash_down", None
+            else:
+                return "jump_down", None
+
+        # 水平攻击范围
         if distance <= self.attack_range:
-            # 在攻击范围内
             if random.random() < 0.3 and self.skill_keys:
-                # 30%概率使用技能
                 skill = random.choice(self.skill_keys)
                 return "skill", skill
             else:
                 return "attack", self.attack_key
         else:
-            # 需要移动靠近
             if monster_center_x < px:
                 return "move_left", None
             else:
@@ -379,23 +395,57 @@ class CombatStrategy:
         """执行动作"""
         if action_type == "idle":
             return
-            
+
         elif action_type == "move_left":
             self._press_key(Key.left, duration=random.uniform(0.1, 0.3))
-            
+
         elif action_type == "move_right":
             self._press_key(Key.right, duration=random.uniform(0.1, 0.3))
-            
+
         elif action_type == "attack":
             key = params or self.attack_key
             self._press_key(key, duration=random.uniform(0.05, 0.15))
-            
+
         elif action_type == "skill":
             key = params or self.skill_keys[0]
             self._press_key(key, duration=random.uniform(0.1, 0.2))
-            
-        elif action_type == "jump":
-            self._press_key(self.jump_key, duration=random.uniform(0.05, 0.1))
+
+        elif action_type == "dash_toward":
+            # 方向键 + 位移键
+            direction = params
+            self.controller.press(direction)
+            time.sleep(0.05)
+            self.controller.press(self.dash_key)
+            time.sleep(0.1)
+            self.controller.release(self.dash_key)
+            self.controller.release(direction)
+            time.sleep(random.uniform(0.05, 0.15))
+
+        elif action_type == "double_jump_toward":
+            # 方向键 + 连按两次跳跃
+            direction = params
+            self.controller.press(direction)
+            time.sleep(0.05)
+            self._press_key(self.jump_key, 0.05)
+            self._press_key(self.jump_key, 0.05)
+            self.controller.release(direction)
+
+        elif action_type == "dash_down":
+            # 下方向键 + 位移键
+            self.controller.press(Key.down)
+            time.sleep(0.05)
+            self.controller.press(self.dash_key)
+            time.sleep(0.1)
+            self.controller.release(self.dash_key)
+            self.controller.release(Key.down)
+            time.sleep(random.uniform(0.05, 0.15))
+
+        elif action_type == "jump_down":
+            # 下方向键 + 跳跃键
+            self.controller.press(Key.down)
+            time.sleep(0.05)
+            self._press_key(self.jump_key, 0.1)
+            self.controller.release(Key.down)
     
     def _press_key(self, key, duration=0.1):
         """按下并释放按键，添加随机延迟"""
@@ -407,22 +457,29 @@ class CombatStrategy:
 
 class ExceptionHandler:
     """异常处理模块 - 防卡死、被击退恢复、死亡检测"""
-    
+
     def __init__(self):
         # 卡死检测参数
         self.position_history = deque(maxlen=30)  # 记录最近30次位置
         self.action_history = deque(maxlen=50)    # 记录最近50次动作
         self.stuck_threshold = 20  # 连续多少次位置不变判定为卡死
         self.no_action_threshold = 100  # 连续多少次idle判定为无怪
-        
+
         # 死亡检测
         self.death_check_interval = 10  # 每10秒检查一次死亡
         self.last_death_check = 0
-        
+
         # 统计数据
         self.start_time = None
         self.total_kills_estimate = 0
         self.last_recovery_time = 0
+
+        # 可配置跳跃键
+        self.jump_key = Key.space
+
+    def set_jump_key(self, key):
+        """设置跳跃键"""
+        self.jump_key = key
         
     def update_position(self, player_pos):
         """更新位置历史"""
@@ -483,9 +540,9 @@ class ExceptionHandler:
                     controller.press(Key.right)
                     time.sleep(0.3)
                     controller.release(Key.right)
-                controller.press(Key.space)
+                controller.press(self.jump_key)
                 time.sleep(0.1)
-                controller.release(Key.space)
+                controller.release(self.jump_key)
                 time.sleep(0.3)
                 
         elif exception_type == "no_monsters":
@@ -535,6 +592,17 @@ class MXDVisionAuto:
         self.detection_count = 0
         self.start_time = None
         
+    # 特殊键字符串到 Key 对象的映射
+    KEY_MAP = {
+        'space': Key.space, 'shift': Key.shift, 'ctrl': Key.ctrl, 'alt': Key.alt,
+        'tab': Key.tab, 'enter': Key.enter, 'up': Key.up, 'down': Key.down,
+        'left': Key.left, 'right': Key.right,
+    }
+
+    def _parse_key(self, key_str):
+        """将用户输入的按键字符串转换为 pynput Key 对象"""
+        return self.KEY_MAP.get(key_str, key_str)
+
     def setup(self):
         """初始化设置"""
         print("\n" + "="*50)
@@ -577,12 +645,26 @@ class MXDVisionAuto:
         attack = input("攻击键 (默认x): ").strip() or 'x'
         skills_input = input("技能键 (多个用逗号分隔，默认a,s): ").strip()
         skills = skills_input.split(',') if skills_input else ['a', 's']
-        self.combat.set_keys(attack=attack, skills=skills)
-        
+        jump_input = input("跳跃键 (默认space): ").strip().lower() or 'space'
+        jump_key = self._parse_key(jump_input)
+        self.combat.set_keys(attack=attack, skills=skills, jump=jump_key)
+        self.exception_handler.set_jump_key(jump_key)
+
+        # 位移技能
+        has_dash_input = input("是否有位移技能? (y/n, 默认n): ").strip().lower()
+        if has_dash_input == 'y':
+            dash_input = input("位移技能键 (默认f): ").strip().lower() or 'f'
+            dash_key = self._parse_key(dash_input)
+            self.combat.set_dash(True, dash_key)
+            print(f"[战斗] 位移技能已启用, 按键: {dash_input}")
+        else:
+            self.combat.set_dash(False)
+
         print("\n" + "="*50)
         print("初始化完成！")
         print(f"检测模式: {'模板匹配' if self.detector.mode=='template' else '颜色检测'}")
         print(f"战斗类型: {'近战' if self.combat.combat_type=='melee' else '远程'}")
+        print(f"位移技能: {'已启用' if self.combat.has_dash else '未启用'}")
         print("按 F10 开始自动刷怪，ESC 停止")
         print("="*50 + "\n")
         
