@@ -38,6 +38,7 @@ class ScreenCapture:
     def __init__(self):
         self.sct = mss.mss()
         self.game_window = None
+        self.game_hwnd = None      # 游戏窗口句柄
         self.manual_region = None  # 手动指定的截图区域
 
     def list_windows(self):
@@ -67,7 +68,8 @@ class ScreenCapture:
             matches = gw.getWindowsWithTitle(window_title)
             if matches:
                 self.game_window = matches[0]
-                print(f"[屏幕] 找到窗口: {self.game_window.title}")
+                self.game_hwnd = int(self.game_window._hWnd)
+                print(f"[屏幕] 找到窗口: {self.game_window.title} (hwnd={self.game_hwnd})")
                 return True
             else:
                 print(f"[屏幕] 未找到包含 '{window_title}' 的窗口")
@@ -77,7 +79,8 @@ class ScreenCapture:
             matches = gw.getWindowsWithTitle(title)
             if matches:
                 self.game_window = matches[0]
-                print(f"[屏幕] 自动找到窗口: {self.game_window.title}")
+                self.game_hwnd = int(self.game_window._hWnd)
+                print(f"[屏幕] 自动找到窗口: {self.game_window.title} (hwnd={self.game_hwnd})")
                 return True
 
         # 让用户输入窗口编号
@@ -88,7 +91,8 @@ class ScreenCapture:
                     idx = int(idx_input)
                     if 0 <= idx < len(all_windows) and all_windows[idx].title:
                         self.game_window = all_windows[idx]
-                        print(f"[屏幕] 已选择窗口: {self.game_window.title}")
+                        self.game_hwnd = int(self.game_window._hWnd)
+                        print(f"[屏幕] 已选择窗口: {self.game_window.title} (hwnd={self.game_hwnd})")
                         return True
             except Exception:
                 pass
@@ -378,20 +382,56 @@ class MonsterDetector:
 
 
 class CombatStrategy:
-    """战斗策略模块 - 支持近战/远程职业"""
-    
-    def __init__(self):
-        self.combat_type = "melee"  # "melee"近战 或 "ranged"远程
-        self.attack_range = 50      # 攻击距离（像素）
-        self.attack_key = 'x'       # 攻击键
-        self.skill_keys = ['a', 's']  # 技能键列表
-        self.jump_key = Key.space   # 跳跃键
-        self.has_dash = False       # 是否有位移技能
-        self.dash_key = None        # 位移技能键
+    """战斗策略模块 - 支持近战/远程职业，PostMessage 直发按键"""
 
-        # 按键控制器
+    # 虚拟键码映射
+    VK_MAP = {
+        Key.left: 0x25, Key.up: 0x26, Key.right: 0x27, Key.down: 0x28,
+        Key.space: 0x20, Key.shift: 0x10, Key.ctrl: 0x11, Key.alt: 0x12,
+        Key.tab: 0x09, Key.enter: 0x0D, Key.esc: 0x1B,
+    }
+    WM_KEYDOWN = 0x0100
+    WM_KEYUP = 0x0101
+
+    def __init__(self):
+        self.combat_type = "melee"
+        self.attack_range = 50
+        self.attack_key = 'x'
+        self.skill_keys = ['a', 's']
+        self.jump_key = Key.space
+        self.has_dash = False
+        self.dash_key = None
         self.controller = Controller()
-        
+        self.game_hwnd = None  # 游戏窗口句柄，用于 PostMessage
+
+    def set_game_hwnd(self, hwnd):
+        """设置游戏窗口句柄"""
+        self.game_hwnd = hwnd
+
+    def _get_vk(self, key):
+        """获取虚拟键码"""
+        if key in self.VK_MAP:
+            return self.VK_MAP[key]
+        if isinstance(key, str) and len(key) == 1:
+            return ord(key.upper())
+        return None
+
+    def _key_down(self, key):
+        """按下按键 - 优先 PostMessage 直发到游戏窗口"""
+        vk = self._get_vk(key)
+        if self.game_hwnd and vk:
+            ctypes.windll.user32.PostMessageW(self.game_hwnd, self.WM_KEYDOWN, vk, 0)
+        else:
+            self.controller.press(key)
+
+    def _key_up(self, key):
+        """释放按键"""
+        vk = self._get_vk(key)
+        if self.game_hwnd and vk:
+            ctypes.windll.user32.PostMessageW(self.game_hwnd, self.WM_KEYUP, vk, 0xC0000001)
+        else:
+            self.controller.release(key)
+
     def set_combat_type(self, combat_type, attack_range=None):
         """设置战斗类型"""
         if combat_type in ["melee", "ranged"]:
@@ -403,7 +443,7 @@ class CombatStrategy:
             print(f"[战斗] 设置为{'近战' if combat_type=='melee' else '远程'}模式, 攻击距离: {self.attack_range}px")
             return True
         return False
-    
+
     def set_keys(self, attack='x', skills=None, jump=Key.space):
         """设置按键"""
         self.attack_key = attack
@@ -416,17 +456,10 @@ class CombatStrategy:
         self.dash_key = dash_key
 
     def get_action(self, player_pos, monsters):
-        """
-        根据玩家位置和怪物位置决定行动
-        返回: (action_type, params)
-            action_type: "move_left", "move_right", "attack", "skill",
-                         "dash_toward", "double_jump_toward",
-                         "dash_down", "jump_down", "idle"
-        """
+        """根据玩家位置和怪物位置决定行动"""
         if not monsters:
             return "idle", None
 
-        # 找到最近的怪物
         nearest = self._find_nearest_monster(player_pos, monsters)
         if nearest is None:
             return "idle", None
@@ -434,13 +467,11 @@ class CombatStrategy:
         mx, my, mw, mh = nearest
         px, py = player_pos
 
-        # 怪物中心点
         monster_center_x = mx + mw // 2
         monster_center_y = my + mh // 2
 
-        # 计算距离
         distance = abs(monster_center_x - px)
-        height_diff = py - monster_center_y  # 正值=怪物在上方, 负值=怪物在下方
+        height_diff = py - monster_center_y
 
         # 怪物在上方超过50px
         if height_diff > 50:
@@ -469,16 +500,16 @@ class CombatStrategy:
                 return "move_left", None
             else:
                 return "move_right", None
-    
+
     def _find_nearest_monster(self, player_pos, monsters):
         """找到最近的怪物"""
         if not monsters:
             return None
-            
+
         px, py = player_pos
         nearest = None
         min_dist = float('inf')
-        
+
         for (mx, my, mw, mh) in monsters:
             cx = mx + mw // 2
             cy = my + mh // 2
@@ -486,11 +517,11 @@ class CombatStrategy:
             if dist < min_dist:
                 min_dist = dist
                 nearest = (mx, my, mw, mh)
-                
+
         return nearest
-    
+
     def execute_action(self, action_type, params):
-        """执行动作"""
+        """执行动作 - 使用 PostMessage 直发按键"""
         if action_type == "idle":
             return
 
@@ -509,48 +540,40 @@ class CombatStrategy:
             self._press_key(key, duration=random.uniform(0.1, 0.2))
 
         elif action_type == "dash_toward":
-            # 方向键 + 位移键
             direction = params
-            self.controller.press(direction)
+            self._key_down(direction)
             time.sleep(0.05)
-            self.controller.press(self.dash_key)
-            time.sleep(0.1)
-            self.controller.release(self.dash_key)
-            self.controller.release(direction)
-            time.sleep(random.uniform(0.05, 0.15))
+            self._press_key(self.dash_key, 0.1)
+            self._key_up(direction)
 
         elif action_type == "double_jump_toward":
-            # 方向键 + 连按两次跳跃
             direction = params
-            self.controller.press(direction)
+            self._key_down(direction)
             time.sleep(0.05)
             self._press_key(self.jump_key, 0.05)
             self._press_key(self.jump_key, 0.05)
-            self.controller.release(direction)
+            self._key_up(direction)
 
         elif action_type == "dash_down":
-            # 下方向键 + 位移键
-            self.controller.press(Key.down)
+            self._key_down(Key.down)
             time.sleep(0.05)
-            self.controller.press(self.dash_key)
-            time.sleep(0.1)
-            self.controller.release(self.dash_key)
-            self.controller.release(Key.down)
-            time.sleep(random.uniform(0.05, 0.15))
+            self._press_key(self.dash_key, 0.1)
+            self._key_up(Key.down)
 
         elif action_type == "jump_down":
-            # 下方向键 + 跳跃键
-            self.controller.press(Key.down)
+            self._key_down(Key.down)
             time.sleep(0.05)
             self._press_key(self.jump_key, 0.1)
-            self.controller.release(Key.down)
-    
+            self._key_up(Key.down)
+
+        print(f"  [动作] {action_type}", end='\r')
+
     def _press_key(self, key, duration=0.1):
-        """按下并释放按键，添加随机延迟"""
-        self.controller.press(key)
+        """按下并释放按键"""
+        self._key_down(key)
         time.sleep(duration)
-        self.controller.release(key)
-        time.sleep(random.uniform(0.05, 0.15))  # 操作后随机延迟
+        self._key_up(key)
+        time.sleep(random.uniform(0.03, 0.08))
 
 
 class ExceptionHandler:
@@ -721,6 +744,13 @@ class MXDVisionAuto:
             self.detector.set_mode("color")
             self._setup_color_mode()
             
+        # 将窗口句柄传给战斗模块（PostMessage直发按键）
+        if self.screen.game_hwnd:
+            self.combat.set_game_hwnd(self.screen.game_hwnd)
+            print(f"[战斗] 已绑定游戏窗口句柄: {self.screen.game_hwnd}")
+        else:
+            print("[警告] 未获取到游戏窗口句柄，将使用普通按键发送（需游戏窗口在前台）")
+
         # 设置战斗类型
         print("\n选择职业类型:")
         print("1. 近战 (战士/飞侠等)")
@@ -853,11 +883,7 @@ class MXDVisionAuto:
         action_type, params = self.combat.get_action(player_pos, monsters)
         self.exception_handler.update_action(action_type)
 
-        # 执行动作前确保游戏窗口在前台
-        if action_type != "idle":
-            self.screen.bring_to_front()
-
-        # 执行动作
+        # 执行动作（PostMessage 直发，无需切前台）
         self.combat.execute_action(action_type, params)
 
         # 显示调试信息（放在动作之后，且不抢焦点）

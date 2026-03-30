@@ -25,11 +25,21 @@ from pynput.keyboard import Controller, Key
 
 class VisionBot:
     """简化版图像识别刷怪机器人"""
-    
+
+    # 虚拟键码映射
+    VK_MAP = {
+        Key.left: 0x25, Key.up: 0x26, Key.right: 0x27, Key.down: 0x28,
+        Key.space: 0x20, Key.shift: 0x10, Key.ctrl: 0x11, Key.alt: 0x12,
+        Key.tab: 0x09, Key.enter: 0x0D, Key.esc: 0x1B,
+    }
+    WM_KEYDOWN = 0x0100
+    WM_KEYUP = 0x0101
+
     def __init__(self):
         self.sct = mss.mss()
         self.controller = Controller()
-        
+        self.game_hwnd = None  # 游戏窗口句柄，用于 PostMessage
+
         # 配置
         self.detect_mode = "color"  # color/template
         self.combat_type = "melee"  # melee/ranged
@@ -51,6 +61,30 @@ class VisionBot:
         # 异常处理
         self.action_history = deque(maxlen=50)
         self.last_move_time = time.time()
+
+    def _get_vk(self, key):
+        """获取虚拟键码"""
+        if key in self.VK_MAP:
+            return self.VK_MAP[key]
+        if isinstance(key, str) and len(key) == 1:
+            return ord(key.upper())
+        return None
+
+    def _key_down(self, key):
+        """按下按键 - 优先 PostMessage 直发到游戏窗口"""
+        vk = self._get_vk(key)
+        if self.game_hwnd and vk:
+            ctypes.windll.user32.PostMessageW(self.game_hwnd, self.WM_KEYDOWN, vk, 0)
+        else:
+            self.controller.press(key)
+
+    def _key_up(self, key):
+        """释放按键"""
+        vk = self._get_vk(key)
+        if self.game_hwnd and vk:
+            ctypes.windll.user32.PostMessageW(self.game_hwnd, self.WM_KEYUP, vk, 0xC0000001)
+        else:
+            self.controller.release(key)
 
     def _setup_capture(self):
         """设置截图区域，返回缓存的截图（如果有）"""
@@ -84,7 +118,8 @@ class VisionBot:
                         "left": w.left, "top": w.top,
                         "width": w.width, "height": w.height,
                     }
-                    print(f"[截图] 已选择窗口: {w.title}")
+                    self.game_hwnd = int(w._hWnd)
+                    print(f"[截图] 已选择窗口: {w.title} (hwnd={self.game_hwnd})")
                     return None
             elif title_input:
                 matches = gw.getWindowsWithTitle(title_input)
@@ -94,7 +129,8 @@ class VisionBot:
                         "left": w.left, "top": w.top,
                         "width": w.width, "height": w.height,
                     }
-                    print(f"[截图] 已选择窗口: {w.title}")
+                    self.game_hwnd = int(w._hWnd)
+                    print(f"[截图] 已选择窗口: {w.title} (hwnd={self.game_hwnd})")
                     return None
             print("[截图] 未匹配到窗口，将使用全屏截图")
             return None
@@ -219,41 +255,35 @@ class VisionBot:
         if height_diff > 50:
             direction = Key.left if monster_x < px else Key.right
             if self.has_dash:
-                self.controller.press(direction)
+                self._key_down(direction)
                 time.sleep(0.05)
-                self.controller.press(self.dash_key)
-                time.sleep(0.1)
-                self.controller.release(self.dash_key)
-                self.controller.release(direction)
-                time.sleep(random.uniform(0.05, 0.15))
+                self._press(self.dash_key, 0.1)
+                self._key_up(direction)
                 self.action_history.append("dash_up")
                 return "dash_up"
             else:
-                self.controller.press(direction)
+                self._key_down(direction)
                 time.sleep(0.05)
                 self._press(self.jump_key, 0.05)
                 self._press(self.jump_key, 0.05)
-                self.controller.release(direction)
+                self._key_up(direction)
                 self.action_history.append("double_jump")
                 return "double_jump"
 
         # 怪物在下方超过30px
         if height_diff < -30:
             if self.has_dash:
-                self.controller.press(Key.down)
+                self._key_down(Key.down)
                 time.sleep(0.05)
-                self.controller.press(self.dash_key)
-                time.sleep(0.1)
-                self.controller.release(self.dash_key)
-                self.controller.release(Key.down)
-                time.sleep(random.uniform(0.05, 0.15))
+                self._press(self.dash_key, 0.1)
+                self._key_up(Key.down)
                 self.action_history.append("dash_down")
                 return "dash_down"
             else:
-                self.controller.press(Key.down)
+                self._key_down(Key.down)
                 time.sleep(0.05)
                 self._press(self.jump_key, 0.1)
-                self.controller.release(Key.down)
+                self._key_up(Key.down)
                 self.action_history.append("jump_down")
                 return "jump_down"
 
@@ -274,10 +304,10 @@ class VisionBot:
                 return "right"
     
     def _press(self, key, duration=0.1):
-        """按键"""
-        self.controller.press(key)
+        """按键 - 使用 PostMessage 或 pynput"""
+        self._key_down(key)
         time.sleep(duration)
-        self.controller.release(key)
+        self._key_up(key)
         time.sleep(random.uniform(0.05, 0.15))
     
     def check_stuck(self):
@@ -308,10 +338,7 @@ class VisionBot:
 
             monsters = self.detect_monsters(img)
 
-            # 执行动作前确保游戏窗口在前台
-            if monsters:
-                self._bring_game_to_front()
-
+            # PostMessage 直发按键，无需每帧切前台
             action = self.action(player_pos, monsters)
             
             # 异常处理
@@ -403,6 +430,10 @@ class VisionBot:
         print(f"\n配置完成: {'模板' if self.detect_mode=='template' else '颜色'}检测 + {'远程' if self.combat_type=='ranged' else '近战'}")
         print(f"跳跃键: {jump_input}")
         print(f"位移技能: {'已启用' if self.has_dash else '未启用'}")
+        if self.game_hwnd:
+            print(f"[PostMessage] 已绑定窗口句柄: {self.game_hwnd}")
+        else:
+            print("[警告] 未获取到窗口句柄，将使用普通按键（需游戏在前台）")
         print("按 F10 开始，ESC 停止\n")
     
     def start(self):
@@ -439,6 +470,10 @@ class VisionBot:
                         break
             except Exception:
                 pass
+
+        # 更新 game_hwnd
+        if target and hasattr(target, '_hWnd'):
+            self.game_hwnd = int(target._hWnd)
 
         if not target:
             return
