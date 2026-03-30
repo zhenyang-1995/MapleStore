@@ -1,0 +1,57 @@
+{
+  "events": [
+    {
+      "key": "Key.left",
+      "interval": 0,
+      "duration": 0.2
+    },
+    {
+      "key": "Key.left",
+      "interval": 0.25,
+      "duration": 0.2
+    },
+    {
+      "key": "Key.left",
+      "interval": 0.25,
+      "duration": 0.2
+    },
+    {
+      "key": "x",
+      "interval": 0.15,
+      "duration": 0.1
+    },
+    {
+      "key": "Key.right",
+      "interval": 0.3,
+      "duration": 0.2
+    },
+    {
+      "key": "Key.right",
+      "interval": 0.25,
+      "duration": 0.2
+    },
+    {
+      "key": "Key.right",
+      "interval": 0.25,
+      "duration": 0.2
+    },
+    {
+      "key": "x",
+      "interval": 0.15,
+      "duration": 0.1
+    },
+    {
+      "key": "z",
+      "interval": 0.2,
+      "duration": 0.15
+    },
+    {
+      "key": "Key.space",
+      "interval": 0.3,
+      "duration": 0.1
+    }
+  ],
+  "min_delay": 0.05,
+  "max_delay": 0.25,
+  "description": "示例：向左移动3次+攻击，向右移动3次+攻击，使用技能+跳跃"
+}
