@@ -55,7 +55,7 @@ class VisionBot:
         """设置截图区域"""
         print("\n截图区域设置:")
         print("1. 自动查找游戏窗口")
-        print("2. 手动输入截图区域")
+        print("2. 鼠标拖拽选择区域")
         print("3. 使用全屏截图")
 
         choice = input("请选择 (1-3, 默认3): ").strip() or '3'
@@ -98,22 +98,31 @@ class VisionBot:
             print("[截图] 未匹配到窗口，将使用全屏截图")
 
         elif choice == '2':
-            try:
-                left = input("  左 (默认0): ").strip()
-                top = input("  上 (默认0): ").strip()
-                width = input("  宽 (默认1920): ").strip()
-                height = input("  高 (默认1080): ").strip()
+            print("\n即将截取全屏，请在弹出的窗口中用鼠标拖拽选择游戏区域...")
+            print("操作: 鼠标拖拽选区 → 按空格或回车确认 → 按C取消重选")
+            input("准备好后按回车截图...")
+
+            monitor = self.sct.monitors[1]
+            screenshot = self.sct.grab(monitor)
+            img = np.array(screenshot)
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+            window_name = "选择游戏区域 - 拖拽选取后按空格/回车确认, C取消"
+            x, y, w, h = cv2.selectROI(window_name, img, fromCenter=False, showCrosshair=True)
+            cv2.destroyAllWindows()
+
+            if w == 0 or h == 0:
+                print("[截图] 未选择区域，将使用全屏截图")
+            else:
                 self.capture_monitor = {
-                    "left": int(left) if left else 0,
-                    "top": int(top) if top else 0,
-                    "width": int(width) if width else 1920,
-                    "height": int(height) if height else 1080,
+                    "left": int(monitor["left"]) + int(x),
+                    "top": int(monitor["top"]) + int(y),
+                    "width": int(w),
+                    "height": int(h),
                 }
-                print(f"[截图] 手动区域已设置: left={self.capture_monitor['left']}, "
+                print(f"[截图] 已选择区域: left={self.capture_monitor['left']}, "
                       f"top={self.capture_monitor['top']}, "
-                      f"w={self.capture_monitor['width']}, h={self.capture_monitor['height']}")
-            except ValueError:
-                print("[截图] 输入无效，将使用全屏截图")
+                      f"宽={self.capture_monitor['width']}, 高={self.capture_monitor['height']}")
         else:
             print("[截图] 使用主显示器全屏截图")
 

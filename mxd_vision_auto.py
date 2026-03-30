@@ -95,29 +95,38 @@ class ScreenCapture:
         print("[屏幕] 未匹配到游戏窗口，将使用手动区域或全屏截图")
         return False
 
-    def set_manual_region(self):
-        """让用户手动输入截图区域"""
-        print("\n手动指定截图区域 (像素坐标):")
-        print("提示: 可以先截图全屏，然后用画图工具查看坐标")
-        try:
-            left = input("  左 (left, 默认0): ").strip()
-            top = input("  上 (top, 默认0): ").strip()
-            width = input("  宽 (width, 默认1920): ").strip()
-            height = input("  高 (height, 默认1080): ").strip()
+    def select_region_interactive(self):
+        """截取全屏后让用户鼠标拖拽选择截图区域"""
+        print("\n即将截取全屏，请在弹出的窗口中用鼠标拖拽选择游戏区域...")
+        print("操作: 鼠标拖拽选区 → 按空格或回车确认 → 按C取消重选")
+        input("准备好后按回车截图...")
 
-            self.manual_region = {
-                "left": int(left) if left else 0,
-                "top": int(top) if top else 0,
-                "width": int(width) if width else 1920,
-                "height": int(height) if height else 1080,
-            }
-            print(f"[屏幕] 手动区域已设置: left={self.manual_region['left']}, "
-                  f"top={self.manual_region['top']}, "
-                  f"w={self.manual_region['width']}, h={self.manual_region['height']}")
-            return True
-        except ValueError:
-            print("[屏幕] 输入无效，手动区域设置失败")
+        # 截取全屏
+        monitor = self.sct.monitors[1]
+        screenshot = self.sct.grab(monitor)
+        img = np.array(screenshot)
+        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+        # 用 OpenCV 让用户框选区域
+        window_name = "选择游戏区域 - 拖拽选取后按空格/回车确认, C取消"
+        x, y, w, h = cv2.selectROI(window_name, img, fromCenter=False, showCrosshair=True)
+        cv2.destroyAllWindows()
+
+        if w == 0 or h == 0:
+            print("[屏幕] 未选择区域，将使用全屏截图")
             return False
+
+        # 添加全屏偏移量
+        self.manual_region = {
+            "left": int(monitor["left"]) + int(x),
+            "top": int(monitor["top"]) + int(y),
+            "width": int(w),
+            "height": int(h),
+        }
+        print(f"[屏幕] 已选择区域: left={self.manual_region['left']}, "
+              f"top={self.manual_region['top']}, "
+              f"宽={self.manual_region['width']}, 高={self.manual_region['height']}")
+        return True
 
     def bring_to_front(self):
         """将游戏窗口前置"""
@@ -676,17 +685,21 @@ class MXDVisionAuto:
         print("冒险岛图像识别自动刷怪 - 初始化")
         print("="*50 + "\n")
 
-        # 查找游戏窗口
-        found = self.screen.find_game_window()
-        if not found:
-            print("\n自动查找窗口失败，请选择:")
-            print("1. 手动输入截图区域")
-            print("2. 使用全屏截图")
-            region_choice = input("请选择 (1-2): ").strip()
-            if region_choice == "1":
-                self.screen.set_manual_region()
-            else:
-                print("[屏幕] 将使用主显示器全屏截图")
+        # 设置截图区域
+        print("\n截图区域设置:")
+        print("1. 自动查找游戏窗口")
+        print("2. 鼠标拖拽选择区域")
+        print("3. 使用全屏截图")
+        region_choice = input("请选择 (1-3, 默认3): ").strip() or '3'
+
+        if region_choice == '1':
+            found = self.screen.find_game_window()
+            if not found:
+                print("[屏幕] 未找到窗口，将使用全屏截图")
+        elif region_choice == '2':
+            self.screen.select_region_interactive()
+        else:
+            print("[屏幕] 使用主显示器全屏截图")
         
         # 选择检测模式
         print("\n选择怪物检测模式:")
