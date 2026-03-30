@@ -49,7 +49,7 @@ class VisionBot:
         self.templates = []
 
         # 异常处理
-        self.pos_history = deque(maxlen=20)
+        self.action_history = deque(maxlen=50)
         self.last_move_time = time.time()
 
     def _setup_capture(self):
@@ -205,6 +205,7 @@ class VisionBot:
         nearest = self.get_nearest(player_pos, monsters)
 
         if nearest is None:
+            self.action_history.append("idle")
             return "idle"
 
         mx, my, mw, mh = nearest
@@ -214,14 +215,10 @@ class VisionBot:
         dist = abs(monster_x - px)
         height_diff = py - monster_y  # 正值=怪物在上方, 负值=怪物在下方
 
-        # 记录位置用于异常检测
-        self.pos_history.append(px)
-
         # 怪物在上方超过50px
         if height_diff > 50:
             direction = Key.left if monster_x < px else Key.right
             if self.has_dash:
-                # 方向键 + 位移键
                 self.controller.press(direction)
                 time.sleep(0.05)
                 self.controller.press(self.dash_key)
@@ -229,19 +226,20 @@ class VisionBot:
                 self.controller.release(self.dash_key)
                 self.controller.release(direction)
                 time.sleep(random.uniform(0.05, 0.15))
+                self.action_history.append("dash_up")
+                return "dash_up"
             else:
-                # 方向键 + 连按两次跳跃
                 self.controller.press(direction)
                 time.sleep(0.05)
                 self._press(self.jump_key, 0.05)
                 self._press(self.jump_key, 0.05)
                 self.controller.release(direction)
-            return "dash_up" if self.has_dash else "double_jump"
+                self.action_history.append("double_jump")
+                return "double_jump"
 
         # 怪物在下方超过30px
         if height_diff < -30:
             if self.has_dash:
-                # 下 + 位移键
                 self.controller.press(Key.down)
                 time.sleep(0.05)
                 self.controller.press(self.dash_key)
@@ -249,25 +247,30 @@ class VisionBot:
                 self.controller.release(self.dash_key)
                 self.controller.release(Key.down)
                 time.sleep(random.uniform(0.05, 0.15))
+                self.action_history.append("dash_down")
+                return "dash_down"
             else:
-                # 下 + 跳跃
                 self.controller.press(Key.down)
                 time.sleep(0.05)
                 self._press(self.jump_key, 0.1)
                 self.controller.release(Key.down)
-            return "dash_down" if self.has_dash else "jump_down"
+                self.action_history.append("jump_down")
+                return "jump_down"
 
         # 水平攻击范围
         if dist <= self.attack_range:
             key = random.choice(self.skill_keys) if random.random() < 0.3 else self.attack_key
             self._press(key)
+            self.action_history.append("attack")
             return "attack"
         else:
             if monster_x < px:
                 self._press(Key.left, 0.2)
+                self.action_history.append("left")
                 return "left"
             else:
                 self._press(Key.right, 0.2)
+                self.action_history.append("right")
                 return "right"
     
     def _press(self, key, duration=0.1):
@@ -278,17 +281,19 @@ class VisionBot:
         time.sleep(random.uniform(0.05, 0.15))
     
     def check_stuck(self):
-        """检查卡死"""
-        if len(self.pos_history) < 15:
+        """检查卡死 - 基于动作历史而非位置（位置是估算值不可靠）"""
+        if len(self.action_history) < 30:
             return False
-        recent = list(self.pos_history)[-15:]
-        if max(recent) - min(recent) < 15:  # 15帧基本没动
-            print("[异常] 卡死，尝试恢复...")
-            # 跳跃和反向移动
+        recent = list(self.action_history)[-30:]
+        attack_count = recent.count("attack") + recent.count("dash_up") + recent.count("double_jump")
+        move_count = recent.count("left") + recent.count("right")
+        # 30帧内没有任何攻击或移动，可能卡死
+        if attack_count == 0 and move_count < 3:
+            print("[异常] 长时间无攻击无移动，尝试恢复...")
             for _ in range(3):
                 self._press(self.jump_key, 0.1)
                 self._press(Key.left if random.random()<0.5 else Key.right, 0.3)
-            self.pos_history.clear()
+            self.action_history.clear()
             return True
         return False
     

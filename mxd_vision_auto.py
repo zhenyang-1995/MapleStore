@@ -589,21 +589,13 @@ class ExceptionHandler:
         self.action_history.append(action_type)
         
     def check_exceptions(self, current_time):
-        """检查各种异常情况，返回异常类型和恢复建议"""
-        
-        # 1. 卡死检测 - 长时间位置基本不变
-        if len(self.position_history) >= self.stuck_threshold:
-            recent_positions = list(self.position_history)[-self.stuck_threshold:]
-            # 计算位置方差
-            if len(recent_positions) > 0:
-                xs = [p[0] for p in recent_positions]
-                variance = max(xs) - min(xs)
-                if variance < 10:  # 30帧内移动小于10像素
-                    if current_time - self.last_recovery_time > 5:  # 5秒内不重复处理
-                        self.last_recovery_time = current_time
-                        return "stuck", "尝试跳跃或反向移动"
-        
-        # 2. 无怪物检测 - 长时间idle
+        """检查各种异常情况，返回异常类型和恢复建议
+
+        注意：玩家位置是估算值（屏幕固定坐标），不是真实追踪，
+        因此禁用基于位置的卡死/被击退检测，只保留基于动作的检测。
+        """
+
+        # 无怪物检测 - 长时间idle
         if len(self.action_history) >= self.no_action_threshold:
             recent_actions = list(self.action_history)[-self.no_action_threshold:]
             idle_count = recent_actions.count("idle")
@@ -611,16 +603,7 @@ class ExceptionHandler:
                 if current_time - self.last_recovery_time > 5:
                     self.last_recovery_time = current_time
                     return "no_monsters", "尝试移动寻找怪物"
-        
-        # 3. 被击退检测 - 位置突然大幅变化（简化版）
-        if len(self.position_history) >= 3:
-            p1 = self.position_history[-3]
-            p2 = self.position_history[-1]
-            if p1 and p2:
-                dist = abs(p2[0] - p1[0])
-                if dist > 100:  # 突然移动超过100像素
-                    return "knocked_back", None
-        
+
         return None, None
     
     def execute_recovery(self, exception_type):
