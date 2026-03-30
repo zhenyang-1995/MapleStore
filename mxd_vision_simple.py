@@ -255,35 +255,43 @@ class VisionBot:
         if height_diff > 50:
             direction = Key.left if monster_x < px else Key.right
             if self.has_dash:
-                self._key_down(direction)
-                time.sleep(0.05)
-                self._press(self.dash_key, 0.1)
-                self._key_up(direction)
+                try:
+                    self._key_down(direction)
+                    time.sleep(0.05)
+                    self._press(self.dash_key, 0.1)
+                finally:
+                    self._key_up(direction)
                 self.action_history.append("dash_up")
                 return "dash_up"
             else:
-                self._key_down(direction)
-                time.sleep(0.05)
-                self._press(self.jump_key, 0.05)
-                self._press(self.jump_key, 0.05)
-                self._key_up(direction)
+                try:
+                    self._key_down(direction)
+                    time.sleep(0.05)
+                    self._press(self.jump_key, 0.05)
+                    self._press(self.jump_key, 0.05)
+                finally:
+                    self._key_up(direction)
                 self.action_history.append("double_jump")
                 return "double_jump"
 
         # 怪物在下方超过30px
         if height_diff < -30:
             if self.has_dash:
-                self._key_down(Key.down)
-                time.sleep(0.05)
-                self._press(self.dash_key, 0.1)
-                self._key_up(Key.down)
+                try:
+                    self._key_down(Key.down)
+                    time.sleep(0.05)
+                    self._press(self.dash_key, 0.1)
+                finally:
+                    self._key_up(Key.down)
                 self.action_history.append("dash_down")
                 return "dash_down"
             else:
-                self._key_down(Key.down)
-                time.sleep(0.05)
-                self._press(self.jump_key, 0.1)
-                self._key_up(Key.down)
+                try:
+                    self._key_down(Key.down)
+                    time.sleep(0.05)
+                    self._press(self.jump_key, 0.1)
+                finally:
+                    self._key_up(Key.down)
                 self.action_history.append("jump_down")
                 return "jump_down"
 
@@ -305,10 +313,22 @@ class VisionBot:
     
     def _press(self, key, duration=0.1):
         """按键 - 使用 PostMessage 或 pynput"""
-        self._key_down(key)
-        time.sleep(duration)
-        self._key_up(key)
+        try:
+            self._key_down(key)
+            time.sleep(duration)
+        finally:
+            self._key_up(key)
         time.sleep(random.uniform(0.05, 0.15))
+
+    def release_all_keys(self):
+        """释放所有可能被按下的按键"""
+        for key in [Key.left, Key.right, Key.up, Key.down,
+                    Key.space, Key.shift, Key.ctrl, Key.alt]:
+            self._key_up(key)
+        for key in [self.attack_key] + self.skill_keys:
+            self._key_up(key)
+        if self.dash_key:
+            self._key_up(self.dash_key)
     
     def check_stuck(self):
         """检查卡死 - 基于动作历史而非位置（位置是估算值不可靠）"""
@@ -440,13 +460,13 @@ class VisionBot:
         """开始"""
         self.stop_flag = False
 
-        # 尝试将游戏窗口切到前台
-        self._bring_game_to_front()
-
         print("\n3秒后开始... (请切换到游戏窗口)")
         for i in range(3, 0, -1):
             print(i)
             time.sleep(1)
+
+        # 倒计时结束后切到游戏窗口，并更新句柄
+        self._bring_game_to_front()
 
     def _bring_game_to_front(self):
         """强制将游戏窗口切到前台"""
@@ -509,7 +529,10 @@ class VisionBot:
         t.start()
         
         print("运行中...\n")
-        self.run_loop()
+        try:
+            self.run_loop()
+        finally:
+            self.release_all_keys()
         print("\n已停止")
 
 

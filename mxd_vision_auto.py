@@ -151,6 +151,22 @@ class ScreenCapture:
             except Exception:
                 pass
 
+        # 没有手动区域时也尝试通过常见标题查找
+        if target is None:
+            try:
+                for title in ["冒险岛", "MapleStory", "新枫之谷", "Maple"]:
+                    matches = gw.getWindowsWithTitle(title)
+                    if matches:
+                        target = matches[0]
+                        break
+            except Exception:
+                pass
+
+        # 更新 game_hwnd（关键：确保后续 PostMessage 能用）
+        if target and hasattr(target, '_hWnd'):
+            self.game_window = target
+            self.game_hwnd = int(target._hWnd)
+
         if target:
             try:
                 hwnd = int(target._hWnd)
@@ -541,38 +557,58 @@ class CombatStrategy:
 
         elif action_type == "dash_toward":
             direction = params
-            self._key_down(direction)
-            time.sleep(0.05)
-            self._press_key(self.dash_key, 0.1)
-            self._key_up(direction)
+            try:
+                self._key_down(direction)
+                time.sleep(0.05)
+                self._press_key(self.dash_key, 0.1)
+            finally:
+                self._key_up(direction)
 
         elif action_type == "double_jump_toward":
             direction = params
-            self._key_down(direction)
-            time.sleep(0.05)
-            self._press_key(self.jump_key, 0.05)
-            self._press_key(self.jump_key, 0.05)
-            self._key_up(direction)
+            try:
+                self._key_down(direction)
+                time.sleep(0.05)
+                self._press_key(self.jump_key, 0.05)
+                self._press_key(self.jump_key, 0.05)
+            finally:
+                self._key_up(direction)
 
         elif action_type == "dash_down":
-            self._key_down(Key.down)
-            time.sleep(0.05)
-            self._press_key(self.dash_key, 0.1)
-            self._key_up(Key.down)
+            try:
+                self._key_down(Key.down)
+                time.sleep(0.05)
+                self._press_key(self.dash_key, 0.1)
+            finally:
+                self._key_up(Key.down)
 
         elif action_type == "jump_down":
-            self._key_down(Key.down)
-            time.sleep(0.05)
-            self._press_key(self.jump_key, 0.1)
-            self._key_up(Key.down)
+            try:
+                self._key_down(Key.down)
+                time.sleep(0.05)
+                self._press_key(self.jump_key, 0.1)
+            finally:
+                self._key_up(Key.down)
 
         print(f"  [动作] {action_type}", end='\r')
 
+    def release_all_keys(self):
+        """释放所有可能被按下的按键"""
+        for key in [Key.left, Key.right, Key.up, Key.down,
+                    Key.space, Key.shift, Key.ctrl, Key.alt]:
+            self._key_up(key)
+        for key in [self.attack_key] + self.skill_keys:
+            self._key_up(key)
+        if self.dash_key:
+            self._key_up(self.dash_key)
+
     def _press_key(self, key, duration=0.1):
         """按下并释放按键"""
-        self._key_down(key)
-        time.sleep(duration)
-        self._key_up(key)
+        try:
+            self._key_down(key)
+            time.sleep(duration)
+        finally:
+            self._key_up(key)
         time.sleep(random.uniform(0.03, 0.08))
 
 
@@ -936,6 +972,10 @@ class MXDVisionAuto:
 
         # 倒计时结束后切到游戏窗口
         self.screen.bring_to_front()
+        # 同步窗口句柄到战斗模块（bring_to_front 可能新发现了窗口）
+        if self.screen.game_hwnd:
+            self.combat.set_game_hwnd(self.screen.game_hwnd)
+            print(f"[PostMessage] 已绑定窗口句柄: {self.screen.game_hwnd}")
         print("运行中... 按 ESC 停止\n")
         
         # 启动ESC监听
@@ -961,6 +1001,7 @@ class MXDVisionAuto:
             
         finally:
             self.running = False
+            self.combat.release_all_keys()
             cv2.destroyAllWindows()
             
             # 打印统计
